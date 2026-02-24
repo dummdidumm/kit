@@ -1,11 +1,11 @@
 import { DEV } from 'esm-env';
-import { disable_search, make_trackable } from '../../../utils/url.js';
-import { validate_depends, validate_load_response } from '../../shared.js';
+import { validate_load_response } from '../../shared.js';
 import { with_request_store, merge_tracing } from '@sveltejs/kit/internal/server';
 import { record_span } from '../../telemetry/record_span.js';
 import { base64_encode, text_decoder } from '../../utils.js';
 import { NULL_BODY_STATUS } from '../constants.js';
 import { get_node_type } from '../utils.js';
+import { create_server_load_tracking } from './load_tracking.js';
 
 /**
  * Calls the user's server `load` function.
@@ -21,56 +21,21 @@ import { get_node_type } from '../utils.js';
 export async function load_server_data({ event, event_state, state, node, parent }) {
 	if (!node?.server) return null;
 
-	let is_tracking = true;
-
-	const uses = {
-		dependencies: new Set(),
-		params: new Set(),
-		parent: false,
-		route: false,
-		url: false,
-		search_params: new Set()
-	};
-
 	const load = node.server.load;
 	// TODO: shouldn't this be calculated using PageNodes? there could be a trailingSlash option on a layout
 	const slash = node.server.trailingSlash;
 
+	const tracking = create_server_load_tracking({
+		event,
+		parent,
+		prerendering: !!state.prerendering,
+		node_id: node.server_id
+	});
+	const { uses } = tracking;
+
 	if (!load) {
 		return { type: 'data', data: null, uses, slash };
 	}
-
-	const url = make_trackable(
-		event.url,
-		() => {
-			if (DEV && done && !uses.url) {
-				console.warn(
-					`${node.server_id}: Accessing URL properties in a promise handler after \`load(...)\` has returned will not cause the function to re-run when the URL changes`
-				);
-			}
-
-			if (is_tracking) {
-				uses.url = true;
-			}
-		},
-		(param) => {
-			if (DEV && done && !uses.search_params.has(param)) {
-				console.warn(
-					`${node.server_id}: Accessing URL properties in a promise handler after \`load(...)\` has returned will not cause the function to re-run when the URL changes`
-				);
-			}
-
-			if (is_tracking) {
-				uses.search_params.add(param);
-			}
-		}
-	);
-
-	if (state.prerendering) {
-		disable_search(url);
-	}
-
-	let done = false;
 
 	const result = await record_span({
 		name: 'sveltekit.load',
@@ -85,89 +50,13 @@ export async function load_server_data({ event, event_state, state, node, parent
 			const result = await with_request_store({ event: traced_event, state: event_state }, () =>
 				load.call(null, {
 					...traced_event,
-					fetch: (info, init) => {
-						const url = new URL(info instanceof Request ? info.url : info, event.url);
-
-						if (DEV && done && !uses.dependencies.has(url.href)) {
-							console.warn(
-								`${node.server_id}: Calling \`event.fetch(...)\` in a promise handler after \`load(...)\` has returned will not cause the function to re-run when the dependency is invalidated`
-							);
-						}
-
-						// Note: server fetches are not added to uses.depends due to security concerns
-						return event.fetch(info, init);
-					},
-					/** @param {string[]} deps */
-					depends: (...deps) => {
-						for (const dep of deps) {
-							const { href } = new URL(dep, event.url);
-
-							if (DEV) {
-								validate_depends(node.server_id || 'missing route ID', dep);
-
-								if (done && !uses.dependencies.has(href)) {
-									console.warn(
-										`${node.server_id}: Calling \`depends(...)\` in a promise handler after \`load(...)\` has returned will not cause the function to re-run when the dependency is invalidated`
-									);
-								}
-							}
-
-							uses.dependencies.add(href);
-						}
-					},
-					params: new Proxy(event.params, {
-						get: (target, key) => {
-							if (DEV && done && typeof key === 'string' && !uses.params.has(key)) {
-								console.warn(
-									`${node.server_id}: Accessing \`params.${String(
-										key
-									)}\` in a promise handler after \`load(...)\` has returned will not cause the function to re-run when the param changes`
-								);
-							}
-
-							if (is_tracking) {
-								uses.params.add(key);
-							}
-							return target[/** @type {string} */ (key)];
-						}
-					}),
-					parent: async () => {
-						if (DEV && done && !uses.parent) {
-							console.warn(
-								`${node.server_id}: Calling \`parent(...)\` in a promise handler after \`load(...)\` has returned will not cause the function to re-run when parent data changes`
-							);
-						}
-
-						if (is_tracking) {
-							uses.parent = true;
-						}
-						return parent();
-					},
-					route: new Proxy(event.route, {
-						get: (target, key) => {
-							if (DEV && done && typeof key === 'string' && !uses.route) {
-								console.warn(
-									`${node.server_id}: Accessing \`route.${String(
-										key
-									)}\` in a promise handler after \`load(...)\` has returned will not cause the function to re-run when the route changes`
-								);
-							}
-
-							if (is_tracking) {
-								uses.route = true;
-							}
-							return target[/** @type {'id'} */ (key)];
-						}
-					}),
-					url,
-					untrack(fn) {
-						is_tracking = false;
-						try {
-							return fn();
-						} finally {
-							is_tracking = true;
-						}
-					}
+					fetch: tracking.fetch,
+					depends: tracking.depends,
+					params: tracking.params,
+					parent: tracking.parent,
+					route: tracking.route,
+					url: tracking.url,
+					untrack: tracking.untrack
 				})
 			);
 
@@ -179,7 +68,7 @@ export async function load_server_data({ event, event_state, state, node, parent
 		validate_load_response(result, `in ${node.server_id}`);
 	}
 
-	done = true;
+	tracking.mark_done();
 
 	return {
 		type: 'data',

@@ -1,5 +1,5 @@
 import * as devalue from 'devalue';
-import { readable, writable } from 'svelte/store';
+import { readable } from 'svelte/store';
 import { DEV } from 'esm-env';
 import { text } from '@sveltejs/kit';
 import * as paths from '$app/paths/internal/server';
@@ -9,7 +9,6 @@ import { s } from '../../../utils/misc.js';
 import { Csp } from './csp.js';
 import { uneval_action_response } from './actions.js';
 import { public_env } from '../../shared-server.js';
-import { SVELTE_KIT_ASSETS } from '../../../constants.js';
 import { SCHEME } from '../../../utils/url.js';
 import { create_server_routing_response, generate_route_object } from './server_routing.js';
 import { add_resolution_suffix } from '../../pathname.js';
@@ -17,6 +16,11 @@ import { try_get_request_store, with_request_store } from '@sveltejs/kit/interna
 import { text_encoder } from '../../utils.js';
 import { get_global_name } from '../utils.js';
 import { create_remote_key } from '../../shared.js';
+import {
+	create_ssr_props,
+	resolve_render_paths,
+	validate_prerendering_csp
+} from './render_pipeline.js';
 
 // TODO rename this function/module
 
@@ -58,15 +62,7 @@ export async function render_response({
 	action_result,
 	data_serializer
 }) {
-	if (state.prerendering) {
-		if (options.csp.mode === 'nonce') {
-			throw new Error('Cannot use prerendering if config.kit.csp.mode === "nonce"');
-		}
-
-		if (options.app_template_contains_nonce) {
-			throw new Error('Cannot use prerendering if page template contains %sveltekit.nonce%');
-		}
-	}
+	validate_prerendering_csp(state, options);
 
 	const { client } = manifest._;
 
@@ -92,80 +88,28 @@ export async function render_response({
 			? (action_result.data ?? null)
 			: null;
 
-	/** @type {string} */
-	let base = paths.base;
-
-	/** @type {string} */
-	let assets = paths.assets;
-
-	/**
-	 * An expression that will evaluate in the client to determine the resolved base path.
-	 * We use a relative path when possible to support IPFS, the internet archive, etc.
-	 */
-	let base_expression = s(paths.base);
+	let { base, assets, base_expression } = resolve_render_paths({
+		event,
+		state,
+		options,
+		base: paths.base,
+		assets: paths.assets,
+		relative: paths.relative
+	});
 
 	const csp = new Csp(options.csp, {
 		prerender: !!state.prerendering
 	});
 
-	// if appropriate, use relative paths for greater portability
-	if (paths.relative) {
-		if (!state.prerendering?.fallback) {
-			const segments = event.url.pathname.slice(paths.base.length).split('/').slice(2);
-
-			base = segments.map(() => '..').join('/') || '.';
-
-			// resolve e.g. '../..' against current location, then remove trailing slash
-			base_expression = `new URL(${s(base)}, location).pathname.slice(0, -1)`;
-
-			if (!paths.assets || (paths.assets[0] === '/' && paths.assets !== SVELTE_KIT_ASSETS)) {
-				assets = base;
-			}
-		} else if (options.hash_routing) {
-			// we have to assume that we're in the right place
-			base_expression = "new URL('.', location).pathname.slice(0, -1)";
-		}
-	}
-
 	if (page_config.ssr) {
-		/** @type {Record<string, any>} */
-		const props = {
-			stores: {
-				page: writable(null),
-				navigating: writable(null),
-				updated
-			},
-			constructors: await Promise.all(
-				branch.map(({ node }) => {
-					if (!node.component) {
-						// Can only be the leaf, layouts have a fallback component generated
-						throw new Error(`Missing +page.svelte component for route ${event.route.id}`);
-					}
-					return node.component();
-				})
-			),
-			form: form_value
-		};
-
-		let data = {};
-
-		// props_n (instead of props[n]) makes it easy to avoid
-		// unnecessary updates for layout components
-		for (let i = 0; i < branch.length; i += 1) {
-			data = { ...data, ...branch[i].data };
-			props[`data_${i}`] = data;
-		}
-
-		props.page = {
-			error,
-			params: /** @type {Record<string, any>} */ (event.params),
-			route: event.route,
+		const props = await create_ssr_props({
+			branch,
+			event,
 			status,
-			url: event.url,
-			data,
-			form: form_value,
-			state: {}
-		};
+			error,
+			form_value,
+			updated
+		});
 
 		const render_opts = {
 			context: new Map([
