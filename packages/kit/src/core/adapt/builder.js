@@ -80,6 +80,26 @@ export function create_builder({
 		return facade;
 	});
 
+	const out_dir = config?.kit?.outDir ?? '.svelte-kit';
+
+	/** @type {import('@sveltejs/kit').BuilderEnvironment[]} */
+	const environments = [
+		{
+			name: 'client',
+			directory: `${out_dir}/output/client`,
+			type: 'client'
+		},
+		{
+			name: 'server',
+			directory: `${out_dir}/output/server`,
+			type: 'server'
+		}
+	];
+
+	const environment_lookup = new Map(
+		environments.map((environment) => [environment.name, environment])
+	);
+
 	return {
 		log,
 		rimraf,
@@ -89,6 +109,7 @@ export function create_builder({
 		config,
 		prerendered,
 		routes,
+		environments,
 
 		async compress(directory) {
 			if (!existsSync(directory)) {
@@ -204,15 +225,29 @@ export function create_builder({
 		},
 
 		getBuildDirectory(name) {
-			return `${config.kit.outDir}/${name}`;
+			return `${out_dir}/${name}`;
+		},
+
+		/**
+		 * @param {string} name
+		 */
+		getEnvironment(name) {
+			return environment_lookup.get(name);
+		},
+
+		/**
+		 * @param {string} name
+		 */
+		getEnvironmentDirectory(name) {
+			return environment_lookup.get(name)?.directory ?? `${out_dir}/output/${name}`;
 		},
 
 		getClientDirectory() {
-			return `${config.kit.outDir}/output/client`;
+			return /** @type {string} */ (environment_lookup.get('client')?.directory);
 		},
 
 		getServerDirectory() {
-			return `${config.kit.outDir}/output/server`;
+			return /** @type {string} */ (environment_lookup.get('server')?.directory);
 		},
 
 		getAppPath() {

@@ -21,7 +21,7 @@ import {
 	normalize_issue,
 	serialize_binary_form,
 	BINARY_FORM_CONTENT_TYPE
-} from '../../form-utils.js';
+} from '../../forms/core.js';
 
 /**
  * Merge client issues into server issues. Server issues are persisted unless

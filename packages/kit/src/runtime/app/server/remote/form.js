@@ -10,7 +10,7 @@ import {
 	deep_set,
 	normalize_issue,
 	flatten_issues
-} from '../../../form-utils.js';
+} from '../../../forms/core.js';
 import { get_cache, run_remote_function } from './shared.js';
 import { ValidationError } from '@sveltejs/kit/internal';
 

@@ -48,6 +48,7 @@ import {
 import { get_message, get_status } from '../../utils/error.js';
 import { writable } from 'svelte/store';
 import { page, update, navigating } from './state.svelte.js';
+import { create_navigation_task_runtime } from './navigation-task.js';
 import { add_data_suffix, add_resolution_suffix } from '../pathname.js';
 import { noop_span } from '../telemetry/noop.js';
 import { text_decoder } from '../utils.js';
@@ -267,8 +268,7 @@ let current_history_index;
 /** @type {number} */
 let current_navigation_index;
 
-/** @type {{}} */
-let token;
+const navigation_tasks = create_navigation_task_runtime();
 
 /**
  * A set of tokens which are associated to current preloads.
@@ -380,7 +380,7 @@ async function _invalidate(include_load_functions = true, reset_page_state = tru
 	if (!pending_invalidate) return;
 	pending_invalidate = null;
 
-	const nav_token = (token = {});
+	const nav_token = navigation_tasks.start();
 	const intent = await get_navigation_intent(current.url, true);
 
 	// Clear preload, it might be affected by the invalidation.
@@ -399,7 +399,7 @@ async function _invalidate(include_load_functions = true, reset_page_state = tru
 	if (include_load_functions) {
 		const prev_state = page.state;
 		const navigation_result = intent && (await load_route(intent));
-		if (!navigation_result || nav_token !== token) return;
+		if (!navigation_result || !navigation_tasks.is_current(nav_token)) return;
 
 		if (navigation_result.type === 'redirect') {
 			return _goto(
@@ -1537,8 +1537,8 @@ async function navigate({
 }) {
 	remote_responses = {};
 
-	const prev_token = token;
-	token = nav_token;
+	const prev_token = navigation_tasks.current();
+	navigation_tasks.set(nav_token);
 
 	const intent = await get_navigation_intent(url, false);
 	const nav =
@@ -1556,7 +1556,9 @@ async function navigate({
 
 	if (!nav) {
 		block();
-		if (token === nav_token) token = prev_token;
+		if (navigation_tasks.is_current(nav_token)) {
+			navigation_tasks.set(prev_token);
+		}
 		return;
 	}
 
@@ -1620,7 +1622,7 @@ async function navigate({
 	url = intent?.url || url;
 
 	// abort if user navigated during update
-	if (token !== nav_token) {
+	if (!navigation_tasks.is_current(nav_token)) {
 		nav.reject(new Error('navigation aborted'));
 		return false;
 	}
@@ -2639,7 +2641,7 @@ function _start_router() {
 
 		if (event.state?.[HISTORY_INDEX]) {
 			const history_index = event.state[HISTORY_INDEX];
-			token = {};
+			const nav_token = navigation_tasks.start();
 
 			// if a popstate-driven navigation is cancelled, we need to counteract it
 			// with history.go, which means we end up back here, hence this check
@@ -2688,7 +2690,7 @@ function _start_router() {
 				block: () => {
 					history.go(-delta);
 				},
-				nav_token: token,
+				nav_token,
 				event
 			});
 		} else {

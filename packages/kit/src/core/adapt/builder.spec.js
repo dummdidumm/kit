@@ -109,3 +109,29 @@ test('instrument generates facade with posix paths', () => {
 	// Cleanup
 	rmSync(dest, { recursive: true, force: true });
 });
+
+test('exposes environment output metadata', () => {
+	/** @type {import('@sveltejs/kit').Config} */
+	const mocked = {
+		extensions: ['.svelte'],
+		kit: {
+			appDir: '_app',
+			outDir: '.svelte-kit'
+		}
+	};
+
+	// @ts-expect-error - we don't need the whole config for this test
+	const builder = create_builder({
+		config: /** @type {import('types').ValidatedConfig} */ (mocked),
+		route_data: []
+	});
+
+	expect(builder.environments?.map((environment) => environment.name)).toEqual([
+		'client',
+		'server'
+	]);
+	expect(builder.getEnvironment?.('client')?.type).toBe('client');
+	expect(builder.getEnvironmentDirectory?.('server')).toBe('.svelte-kit/output/server');
+	expect(builder.getClientDirectory()).toBe('.svelte-kit/output/client');
+	expect(builder.getServerDirectory()).toBe('.svelte-kit/output/server');
+});

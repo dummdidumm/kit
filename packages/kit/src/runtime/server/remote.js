@@ -12,7 +12,7 @@ import { normalize_error } from '../../utils/error.js';
 import { check_incorrect_fail_use } from './page/actions.js';
 import { DEV } from 'esm-env';
 import { record_span } from '../telemetry/record_span.js';
-import { deserialize_binary_form } from '../form-utils.js';
+import { deserialize_binary_form } from '../forms/core.js';
 
 /** @type {typeof handle_remote_call_internal} */
 export async function handle_remote_call(event, state, options, manifest, id) {

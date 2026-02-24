@@ -1,0 +1,35 @@
+{
+	".": {
+		"file": "src/exports/index.js",
+		"exports": [
+			"VERSION",
+			"error",
+			"fail",
+			"invalid",
+			"isActionFailure",
+			"isHttpError",
+			"isRedirect",
+			"isValidationError",
+			"json",
+			"normalizeUrl",
+			"redirect",
+			"text"
+		]
+	},
+	"./hooks": {
+		"file": "src/exports/hooks/index.js",
+		"exports": ["sequence"]
+	},
+	"./node": {
+		"file": "src/exports/node/index.js",
+		"exports": ["createReadableStream", "getRequest", "setResponse"]
+	},
+	"./node/polyfills": {
+		"file": "src/exports/node/polyfills.js",
+		"exports": ["installPolyfills"]
+	},
+	"./vite": {
+		"file": "src/exports/vite/index.js",
+		"exports": ["sveltekit"]
+	}
+}

@@ -19,6 +19,7 @@ import { not_found } from '../utils.js';
 import { SCHEME } from '../../../utils/url.js';
 import { check_feature } from '../../../utils/features.js';
 import { escape_html } from '../../../utils/escape.js';
+import { get_module_by_url } from '../environment.js';
 
 const cwd = process.cwd();
 // vite-specifc queries that we should skip handling for css urls
@@ -96,7 +97,7 @@ export async function dev(vite, vite_config, svelte_config, get_remotes) {
 
 		const module = await loud_ssr_load_module(url);
 
-		const module_node = await vite.moduleGraph.getModuleByUrl(url);
+		const module_node = await get_module_by_url(vite, url, 'client');
 		if (!module_node) throw new Error(`Could not find node for ${url}`);
 
 		return { module, module_node, url };
@@ -187,7 +188,7 @@ export async function dev(vite, vite_config, svelte_config, get_remotes) {
 						result.stylesheets = [];
 						result.fonts = [];
 
-						/** @type {import('vite').ModuleNode[]} */
+						/** @type {Array<import('vite').ModuleNode | import('vite').EnvironmentModuleNode>} */
 						const module_nodes = [];
 
 						if (node.component) {
@@ -612,7 +613,7 @@ async function find_deps(vite, node, deps) {
 
 	/** @param {string} url */
 	async function add_by_url(url) {
-		const node = await get_server_module_by_url(vite, url);
+		const node = await get_module_by_url(vite, url, 'ssr');
 
 		if (node) {
 			await add(node);
@@ -635,16 +636,6 @@ async function find_deps(vite, node, deps) {
 	}
 
 	await Promise.all(branches);
-}
-
-/**
- * @param {import('vite').ViteDevServer} vite
- * @param {string} url
- */
-function get_server_module_by_url(vite, url) {
-	return vite.environments
-		? vite.environments.ssr.moduleGraph.getModuleByUrl(url)
-		: vite.moduleGraph.getModuleByUrl(url, true);
 }
 
 /**
