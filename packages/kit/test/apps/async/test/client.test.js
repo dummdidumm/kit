@@ -380,6 +380,22 @@ test.describe('remote function mutations', () => {
 		await expect(page.locator('#phrase')).toHaveText('i am your father');
 	});
 
+	test('overlapping query.refresh calls do not cause nested query request loops', async ({ page }) => {
+		await page.goto('/remote/query-refresh-loop');
+
+		await expect(page.locator('#query-length')).toHaveText('3');
+		await expect(page.locator('#multiply-request-count')).toHaveText('3');
+
+		await page.click('#refresh-twice');
+
+		await expect(page.locator('#query-length')).toHaveText('3');
+		await expect(page.locator('#multiply-request-count')).toHaveText('6');
+
+		// If stale refresh results are applied out-of-order this count keeps growing indefinitely
+		await page.waitForTimeout(250);
+		await expect(page.locator('#multiply-request-count')).toHaveText('6');
+	});
+
 	test.describe('query runtime guardrails', () => {
 		test('query created outside tracking context can run but cannot expose reactive state', async ({
 			page
