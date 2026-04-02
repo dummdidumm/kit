@@ -240,9 +240,11 @@ export class Query {
 				const idx = this.#latest.indexOf(resolve);
 				if (idx === -1) return;
 
+				const stale = this.#latest.splice(0, idx + 1);
+
 				// Untrack this to not trigger mutation validation errors which can occur if you do e.g. $derived({ a: await queryA(), b: await queryB() })
 				untrack(() => {
-					this.#latest.splice(0, idx).forEach((r) => r(undefined));
+					stale.slice(0, -1).forEach((r) => r(undefined));
 					this.#ready = true;
 					this.#loading = false;
 					this.#raw = value;
@@ -255,8 +257,10 @@ export class Query {
 				const idx = this.#latest.indexOf(resolve);
 				if (idx === -1) return;
 
+				const stale = this.#latest.splice(0, idx + 1);
+
 				untrack(() => {
-					this.#latest.splice(0, idx).forEach((r) => r(undefined));
+					stale.slice(0, -1).forEach((r) => r(undefined));
 					this.#error = e;
 					this.#loading = false;
 				});

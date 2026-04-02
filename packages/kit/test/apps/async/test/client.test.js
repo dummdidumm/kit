@@ -380,6 +380,27 @@ test.describe('remote function mutations', () => {
 		await expect(page.locator('#phrase')).toHaveText('i am your father');
 	});
 
+	test('nested queries in each loop remain stable across quick repeated refreshes', async ({
+		page
+	}) => {
+		await page.goto('/remote/nested-refresh-loop');
+
+		await expect(page.locator('#request-count')).toHaveText('6');
+		await expect(page.locator('#inner-0')).toHaveText('10');
+		await expect(page.locator('#inner-1')).toHaveText('20');
+		await expect(page.locator('#inner-2')).toHaveText('30');
+
+		await page.click('#double-refresh');
+		await expect(page.locator('#done')).toHaveText('true');
+
+		await page.waitForTimeout(200);
+
+		await expect(page.locator('#request-count')).toHaveText('12');
+		await expect(page.locator('#inner-0')).toHaveText('10');
+		await expect(page.locator('#inner-1')).toHaveText('20');
+		await expect(page.locator('#inner-2')).toHaveText('30');
+	});
+
 	test.describe('query runtime guardrails', () => {
 		test('query created outside tracking context can run but cannot expose reactive state', async ({
 			page
