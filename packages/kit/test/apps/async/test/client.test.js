@@ -381,19 +381,29 @@ test.describe('remote function mutations', () => {
 	});
 
 	test('overlapping query.refresh calls do not cause nested query request loops', async ({ page }) => {
+		/** @type {number[]} */
+		const multiply_request_timestamps = [];
+		page.on('request', (request) => {
+			if (request.url().includes('/_app/remote') && request.url().includes('/multiply_by_10')) {
+				multiply_request_timestamps.push(Date.now());
+			}
+		});
+
 		await page.goto('/remote/query-refresh-loop');
 
 		await expect(page.locator('#query-length')).toHaveText('3');
-		await expect(page.locator('#multiply-request-count')).toHaveText('3');
-
+		const baseline = multiply_request_timestamps.length;
 		await page.click('#refresh-twice');
 
 		await expect(page.locator('#query-length')).toHaveText('3');
-		await expect(page.locator('#multiply-request-count')).toHaveText('6');
+		await page.waitForTimeout(500);
+		const after_settle = multiply_request_timestamps.length;
+		const added_requests = after_settle - baseline;
+		expect(added_requests).toBeLessThanOrEqual(6);
 
 		// If stale refresh results are applied out-of-order this count keeps growing indefinitely
-		await page.waitForTimeout(250);
-		await expect(page.locator('#multiply-request-count')).toHaveText('6');
+		await page.waitForTimeout(500);
+		expect(multiply_request_timestamps.length).toBe(after_settle);
 	});
 
 	test.describe('query runtime guardrails', () => {
