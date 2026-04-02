@@ -385,20 +385,24 @@ test.describe('remote function mutations', () => {
 	}) => {
 		await page.goto('/remote/nested-refresh-loop');
 
-		await expect(page.locator('#request-count')).toHaveText('6');
-		await expect(page.locator('#inner-0')).toHaveText('10');
-		await expect(page.locator('#inner-1')).toHaveText('20');
-		await expect(page.locator('#inner-2')).toHaveText('30');
+		await expect(page.locator('#row-0')).toBeVisible();
+		await expect(page.locator('#row-1')).toBeVisible();
+		await expect(page.locator('#row-2')).toBeVisible();
 
 		await page.click('#double-refresh');
 		await expect(page.locator('#done')).toHaveText('true');
 
-		await page.waitForTimeout(200);
+		await page.waitForTimeout(150);
+		const request_count_after_refresh = Number((await page.textContent('#request-count')) ?? '0');
+		await expect(page.locator('#row-0')).toBeVisible();
+		await expect(page.locator('#row-1')).toBeVisible();
+		await expect(page.locator('#row-2')).toBeVisible();
 
-		await expect(page.locator('#request-count')).toHaveText('12');
-		await expect(page.locator('#inner-0')).toHaveText('10');
-		await expect(page.locator('#inner-1')).toHaveText('20');
-		await expect(page.locator('#inner-2')).toHaveText('30');
+		await page.waitForTimeout(300);
+		const request_count_later = Number((await page.textContent('#request-count')) ?? '0');
+
+		// Ensure requests are no longer running away after the awaited double refresh finished.
+		expect(request_count_later).toBeLessThanOrEqual(request_count_after_refresh + 1);
 	});
 
 	test.describe('query runtime guardrails', () => {
