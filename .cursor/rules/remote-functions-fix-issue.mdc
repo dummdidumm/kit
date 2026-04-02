@@ -1,0 +1,71 @@
+---
+description: Remote functions Guide for SvelteKit runtime
+globs: packages/kit/src/runtime/**/*
+alwaysApply: false
+---
+
+# Remote functions guide:
+
+Use this map when diagnosing `kit.experimental.remoteFunctions` behavior.
+
+Remote functions are an experimental feature (`kit.experimental.remoteFunctions: true`) that let you define server-side functions in `.remote.js`/`.remote.ts` files callable from the client. There are four types: `query` (read data via GET), `form` (form submissions via POST), `command` (mutations via POST), and `prerender` (prerenderable queries).
+
+**How it works end-to-end:**
+
+1. You define exports in a `.remote.js` file using `query()`, `form()`, `command()`, or `prerender()` from `$app/server`
+2. At build time, the Vite plugin (`plugin_remote` in `exports/vite/index.js`) transforms these files:
+   - **Server build**: keeps the real functions, injects `init_remote_functions()` to assign IDs
+   - **Client build**: replaces all exports with fetch-based stubs from `__sveltekit/remote`
+3. At runtime, client stubs make fetch requests to `/{appDir}/remote/{hash}/{name}?payload={base64-encoded-args}`
+4. The server handler (`runtime/server/remote.js`) routes the request, loads the module from `manifest._.remotes`, executes the function, and returns a JSON response
+5. Results are serialized with `devalue` (respecting `hooks.transport` for custom types)
+
+**Key files for remote function bugs:**
+
+Client side (in `runtime/client/remote-functions/`):
+
+- `shared.svelte.js` — `remote_request()` (makes fetch calls), `create_remote_function()` (creates client stubs with caching), `refresh_queries()`, `release_overrides()`
+- `query.svelte.js` — `Query` class with reactive state (`loading`, `ready`, `current`, `error`), `set()`, `refresh()`, `withOverride()`
+- `form.svelte.js` — form attachment, validation/issues handling, field proxies, `form.for(key)` for keyed instances
+- `command.svelte.js` — simple promise wrapper, `updates()` for optimistic updates
+- `prerender.svelte.js` — uses Cache API for client-side caching, `Prerender` class similar to `Query`
+
+Server side (in `runtime/app/server/remote/`):
+
+- `shared.js` — `run_remote_function()` (executes with restricted event — no `setHeaders`), `create_validator()` (Standard Schema validation), `get_cache()` (SSR dedup), `get_response()` (caching/refreshes)
+- `query.js` — server query implementation with `set()` and `refresh()` (callable from commands/forms)
+- `form.js` — handles form data deserialization, validation errors, returns `{ issues, result }`
+- `command.js` — simple function wrapper, allows cookies (unlike queries)
+- `prerender.js` — prerenderable queries, results stored in prerender dependencies
+
+Request handling:
+
+- `runtime/server/remote.js` — `handle_remote_call()` routes requests to the right handler, `handle_remote_form_post()` handles non-enhanced form POSTs, serialization via `devalue` with transport encoders
+
+Build time:
+
+- `exports/vite/index.js` (`plugin_remote`) — detects `.remote.{js,ts}` files, transforms imports for client/server, tracks remote files in manifest
+- `exports/internal/remote-functions.js` — `init_remote_functions()` validates exports and assigns IDs
+
+Serialization:
+
+- `runtime/shared.js` — `stringify_remote_arg()` / `parse_remote_arg()` for base64-encoded URL-safe argument encoding
+- `runtime/form-utils.js` — `serialize_binary_form()` / `deserialize_binary_form()` for form data
+
+**Common remote function bug areas:**
+
+- **Query caching/staleness** → `runtime/client/remote-functions/shared.svelte.js` (`query_map`, `remote_responses` caches) and `query.svelte.js`
+- **Form validation/issues** → `runtime/client/remote-functions/form.svelte.js` (field proxies, issue tracking) and `runtime/app/server/remote/form.js`
+- **Optimistic updates not releasing** → `shared.svelte.js` (`release_overrides`), `command.svelte.js` (`updates()`)
+- **Serialization/transport errors** → `runtime/shared.js` (arg encoding), `runtime/server/remote.js` (response serialization), `hooks.transport` custom types
+- **SSR deduplication** → `runtime/app/server/remote/shared.js` (`get_cache()`), `runtime/server/page/render.js` (inlining results for hydration)
+- **Redirect from remote functions** → `runtime/server/remote.js` (server side) and `runtime/client/remote-functions/shared.svelte.js` (`remote_request` handles redirect responses)
+- **Build/transform bugs** → `exports/vite/index.js` (`plugin_remote` section) and `exports/internal/remote-functions.js`
+- **Event restrictions** → `runtime/app/server/remote/shared.js` — remote functions get a restricted `RequestEvent` (no `setHeaders()`, cookies require absolute paths, `is_in_remote_function: true`)
+
+**Testing remote functions:**
+
+- Remote function tests live in `packages/kit/test/apps/async/` (not `basics`!) — this is the app that has `experimental.remoteFunctions: true`
+- Test routes are at `packages/kit/test/apps/async/src/routes/remote/` with subfolders for different scenarios (query, form, batch, prerender, transport, validation, etc.)
+- To run: `cd packages/kit/test/apps/async && npx playwright test --grep "test name"` or `pnpm -F test-async test:dev`
+- When creating a test route for a remote function bug, add a `.remote.js`/`.remote.ts` file alongside the `+page.svelte`
