@@ -383,6 +383,9 @@ test.describe('remote function mutations', () => {
 	test('nested queries in each loop remain stable across quick repeated refreshes', async ({
 		page
 	}) => {
+		let request_count = 0;
+		page.on('request', (r) => (request_count += r.url().includes('/_app/remote') ? 1 : 0));
+
 		await page.goto('/remote/nested-refresh-loop');
 
 		await expect(page.locator('#row-0')).toBeVisible();
@@ -393,13 +396,13 @@ test.describe('remote function mutations', () => {
 		await expect(page.locator('#done')).toHaveText('true');
 
 		await page.waitForTimeout(150);
-		const request_count_after_refresh = Number((await page.textContent('#request-count')) ?? '0');
+		const request_count_after_refresh = request_count;
 		await expect(page.locator('#row-0')).toBeVisible();
 		await expect(page.locator('#row-1')).toBeVisible();
 		await expect(page.locator('#row-2')).toBeVisible();
 
 		await page.waitForTimeout(300);
-		const request_count_later = Number((await page.textContent('#request-count')) ?? '0');
+		const request_count_later = request_count;
 
 		// Ensure requests are no longer running away after the awaited double refresh finished.
 		expect(request_count_later).toBeLessThanOrEqual(request_count_after_refresh + 1);
