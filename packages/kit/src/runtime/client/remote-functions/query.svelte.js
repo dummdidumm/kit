@@ -261,10 +261,11 @@ export class Query {
 				// Skip the response if resource was refreshed with a later promise while we were waiting for this one to resolve
 				const idx = this.#latest.indexOf(resolve);
 				if (idx === -1) return;
+				if (idx !== this.#latest.length - 1) return;
 
 				// Untrack this to not trigger mutation validation errors which can occur if you do e.g. $derived({ a: await queryA(), b: await queryB() })
 				untrack(() => {
-					this.#latest.splice(0, idx).forEach((r) => r(undefined));
+					this.#latest.splice(0, idx + 1).forEach((r) => r(undefined));
 					this.#ready = true;
 					this.#loading = false;
 					this.#raw = value;
@@ -276,9 +277,10 @@ export class Query {
 			.catch((e) => {
 				const idx = this.#latest.indexOf(resolve);
 				if (idx === -1) return;
+				if (idx !== this.#latest.length - 1) return;
 
 				untrack(() => {
-					this.#latest.splice(0, idx).forEach((r) => r(undefined));
+					this.#latest.splice(0, idx + 1).forEach((r) => r(undefined));
 					this.#error = e;
 					this.#loading = false;
 				});
