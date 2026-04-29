@@ -22,7 +22,10 @@ import {
 	ClientInit,
 	Transport,
 	HandleValidationError,
-	RemoteFormIssue
+	RemoteFormIssue,
+	RequestCache,
+	RemoteQuery,
+	RemoteLiveQuery
 } from '@sveltejs/kit';
 import {
 	HttpMethod,
@@ -172,7 +175,9 @@ export interface Env {
 }
 
 export class InternalServer extends Server {
-	init(options: ServerInitOptions): Promise<void>;
+	init(
+		options: ServerInitOptions & { memory_cache?: import('types').KitCacheHandler }
+	): Promise<void>;
 	respond(
 		request: Request,
 		options: RequestOptions & {
@@ -303,6 +308,8 @@ export type RemoteFunctionResponse =
 	| (ServerRedirectNode & {
 			/** devalue'd Record<string, any> */
 			refreshes?: string;
+			/** devalue'd Record<string, any> */
+			reconnects?: string;
 	  })
 	| ServerErrorNode
 	| {
@@ -310,22 +317,33 @@ export type RemoteFunctionResponse =
 			result: string;
 			/** devalue'd Record<string, any> */
 			refreshes: string | undefined;
+			/** devalue'd Record<string, any> */
+			reconnects: string | undefined;
 	  };
 
-export type RemoteRefreshResult = {
+export type RemoteSingleflightResult = {
 	type: 'result';
 	data: any;
 };
 
-export type RemoteRefreshError = {
+export type RemoteSingleflightError = {
 	type: 'error';
 	status?: number;
 	error: App.Error;
 };
 
-export type RemoteRefreshEntry = RemoteRefreshResult | RemoteRefreshError;
+export type RemoteSingleflightEntry = RemoteSingleflightResult | RemoteSingleflightError;
 
-export type RemoteRefreshMap = Record<string, RemoteRefreshEntry>;
+export type RemoteSingleflightMap = Record<string, RemoteSingleflightEntry>;
+
+export type RemoteLiveQueryUserFunctionReturnType<Output> = MaybePromise<
+	| AsyncGenerator<Output>
+	| AsyncIterator<Output>
+	| AsyncIterable<Output>
+	| Generator<Output>
+	| Iterator<Output>
+	| Iterable<Output>
+>;
 
 /**
  * Signals a successful response of the server `load` function.
@@ -479,6 +497,9 @@ export interface SSROptions {
 	env_private_prefix: string;
 	hash_routing: boolean;
 	hooks: ServerHooks;
+	kit_cache_config: () => Promise<KitCacheHandler>;
+	/** Filled during `Server.init` when `kit.cache.path` is set, or during dev/preview when `memory_cache` is provided */
+	kit_cache_handler: KitCacheHandler | null;
 	preload_strategy: ValidatedConfig['kit']['output']['preloadStrategy'];
 	root: SSRComponent['default'];
 	service_worker: boolean;
@@ -593,19 +614,41 @@ interface BaseRemoteInternals {
 export interface RemoteQueryInternals extends BaseRemoteInternals {
 	type: 'query';
 	validate: (arg?: any) => MaybePromise<any>;
+	/**
+	 * Creates a `RemoteQuery` bound directly to a specific client payload (the
+	 * stringified raw argument) and a pre-validated argument, skipping the query
+	 * wrapper's re-validation step. Used by `requested(query)` to ensure
+	 * `refresh()` / `set()` target the same cache key the client is listening on
+	 * even when the schema transforms the input.
+	 */
+	bind(payload: string, arg: any): RemoteQuery<any>;
 }
 export interface RemoteQueryLiveInternals extends BaseRemoteInternals {
 	type: 'query_live';
-	run(
-		event: RequestEvent,
-		state: RequestState,
-		arg: any
-	): Promise<{ iterator: AsyncIterator<any>; cancel: () => void }>;
+	validate: (arg?: any) => MaybePromise<any>;
+	run(event: RequestEvent, state: RequestState, arg: any): AsyncGenerator<any>;
+	/**
+	 * Creates a `RemoteLiveQuery` bound directly to a specific client payload (the
+	 * stringified raw argument) and a pre-validated argument, skipping the query
+	 * wrapper's re-validation step. Used by `requested(liveQuery)` to ensure
+	 * `reconnect()` targets the same cache key the client is listening on even
+	 * when the schema transforms the input.
+	 */
+	bind(payload: string, arg: any): RemoteLiveQuery<any>;
 }
 
 export interface RemoteQueryBatchInternals extends BaseRemoteInternals {
 	type: 'query_batch';
+	validate: (arg?: any) => MaybePromise<any>;
 	run: (args: any[], options: SSROptions) => Promise<any[]>;
+	/**
+	 * Creates a `RemoteQuery` bound directly to a specific client payload (the
+	 * stringified raw argument) and a pre-validated argument, skipping the query
+	 * wrapper's re-validation step. Used by `requested(batchQuery)` to ensure
+	 * `refresh()` / `set()` target the same cache key the client is listening on
+	 * even when the schema transforms the input.
+	 */
+	bind(payload: string, arg: any): RemoteQuery<any>;
 }
 
 export interface RemoteCommandInternals extends BaseRemoteInternals {
@@ -624,10 +667,13 @@ export interface RemotePrerenderInternals extends BaseRemoteInternals {
 	inputs?: RemotePrerenderInputsGenerator;
 }
 
-export type RemoteInternals =
+export type RemoteAnyQueryInternals =
 	| RemoteQueryInternals
-	| RemoteQueryLiveInternals
 	| RemoteQueryBatchInternals
+	| RemoteQueryLiveInternals;
+
+export type RemoteInternals =
+	| RemoteAnyQueryInternals
 	| RemoteCommandInternals
 	| RemoteFormInternals
 	| RemotePrerenderInternals;
@@ -644,10 +690,19 @@ export type RecordSpan = <T>(options: {
 	fn: (current: Span) => Promise<T>;
 }) => Promise<T>;
 
-/**
- * Internal state associated with the current `RequestEvent`,
- * used for tracking things like remote function calls
- */
+export interface KitCacheOptions {
+	maxAge: number;
+	staleWhileRevalidate?: number;
+	tags: string[];
+}
+
+export interface KitCacheHandler {
+	get(queryId: string): MaybePromise<string | undefined>;
+	set(queryId: string, stringifiedResponse: string, cache: KitCacheOptions): MaybePromise<void>;
+	setHeaders?(headers: Headers, cache: KitCacheOptions): MaybePromise<void>;
+	invalidate(tags: string[]): MaybePromise<void>;
+}
+
 export interface RequestState {
 	readonly prerendering: PrerenderOptions | undefined;
 	readonly transport: ServerHooks['transport'];
@@ -661,10 +716,18 @@ export interface RequestState {
 			Record<string, { serialize: boolean; data: MaybePromise<any> }>
 		>;
 		forms: null | Map<any, any>;
-		refreshes: null | Record<string, Promise<any>>;
+		refreshes: null | Map<string, Promise<any>>;
+		reconnects: null | Map<string, Promise<any>>;
 		requested: null | Map<string, string[]>;
-		validated: null | Map<string, Set<any>>;
+		/**
+		 * A list of promises to await for invalidations to complete.
+		 * Used to await them at the end and to ignore cache reads on subsequent refresh calls.
+		 */
+		invalidations: null | Promise<void>[];
+		/** The cache implementation to use for remote query functions. */
+		cache: null | KitCacheHandler;
 	};
+	readonly cache: RequestCache;
 	readonly is_in_remote_function: boolean;
 	readonly is_in_render: boolean;
 	readonly is_in_universal_load: boolean;

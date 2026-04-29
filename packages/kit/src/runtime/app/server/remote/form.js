@@ -13,6 +13,7 @@ import {
 } from '../../../form-utils.js';
 import { get_cache, run_remote_function } from './shared.js';
 import { ValidationError } from '@sveltejs/kit/internal';
+import { await_remote_invalidations, create_invalidate_cache } from '../../../server/cache.js';
 
 /**
  * Creates a form object that can be spread onto a `<form>` element.
@@ -136,7 +137,8 @@ export function form(validate_or_fn, maybe_fn) {
 						data = validated.value;
 					}
 
-					state.remote.refreshes ??= {};
+					state.remote.refreshes ??= new Map();
+					state.remote.reconnects ??= new Map();
 
 					const issue = create_issues();
 
@@ -145,6 +147,7 @@ export function form(validate_or_fn, maybe_fn) {
 							event,
 							state,
 							true,
+							create_invalidate_cache(state),
 							() => data,
 							(data) => (!maybe_fn ? fn() : fn(data, issue))
 						);
@@ -154,6 +157,8 @@ export function form(validate_or_fn, maybe_fn) {
 						} else {
 							throw e;
 						}
+					} finally {
+						await await_remote_invalidations(state);
 					}
 				}
 

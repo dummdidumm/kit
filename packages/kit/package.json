@@ -1,6 +1,6 @@
 {
 	"name": "@sveltejs/kit",
-	"version": "2.57.1",
+	"version": "2.58.0",
 	"description": "SvelteKit is the fastest way to build Svelte apps",
 	"keywords": [
 		"framework",
@@ -118,6 +118,16 @@
 		"./node/polyfills": {
 			"types": "./types/index.d.ts",
 			"import": "./src/exports/node/polyfills.js"
+		},
+		"./node/cache": {
+			"types": "./types/index.d.ts",
+			"import": "./src/exports/node/cache.js"
+		},
+		"./node/in-memory-cache": {
+			"import": "./src/exports/node/in-memory-query-cache.js"
+		},
+		"./node/redis-cache": {
+			"import": "./src/exports/node/redis-query-cache.js"
 		},
 		"./hooks": {
 			"types": "./types/index.d.ts",
